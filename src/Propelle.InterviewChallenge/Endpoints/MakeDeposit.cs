@@ -1,4 +1,6 @@
 ﻿using FastEndpoints;
+using Polly;
+using Polly.Retry;
 using Propelle.InterviewChallenge.Application;
 using Propelle.InterviewChallenge.Application.Domain;
 using Propelle.InterviewChallenge.Application.Domain.Events;
@@ -38,11 +40,16 @@ namespace Propelle.InterviewChallenge.Endpoints
             }
 
             public override async Task HandleAsync(Request req, CancellationToken ct)
-            {
+            { 
                 var deposit = new Deposit(req.UserId, req.Amount);
                 _paymentsContext.Deposits.Add(deposit);
 
-                await _paymentsContext.SaveChangesAsync(ct);
+                AsyncRetryPolicy retryPolicy = Polly.Policy.Handle<TransientException>()
+                .WaitAndRetryAsync(30, retryAttempt =>
+                TimeSpan.FromSeconds( retryAttempt) / 2);
+
+                await retryPolicy.ExecuteAsync(
+                    async () => { await _paymentsContext.SaveChangesAsync(ct); });
 
                 await _eventBus.Publish(new DepositMade
                 {
@@ -51,6 +58,9 @@ namespace Propelle.InterviewChallenge.Endpoints
 
                 await SendAsync(new Response { DepositId = deposit.Id }, 201, ct);
             }
+
+
+
         }
     }
 }
